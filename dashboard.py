@@ -157,7 +157,7 @@ section[data-testid="stSidebar"] {
 .delta-up { background: rgba(34,197,94,0.15); color: #22c55e; }
 .delta-down { background: rgba(239,68,68,0.15); color: #ef4444; }
 
-/* ── Fast Mover Alert Card ────────────────────────── */
+/* ── Warning Alert Card ────────────────────────── */
 .alert-card {
     background: rgba(239,68,68,0.06);
     border: 1px solid rgba(239,68,68,0.25);
@@ -337,9 +337,9 @@ COLORS = {
     "Fossil Fuel": "#ef4444",
     "ESG / Clean Energy": "#06b6d4",
     "Benchmark": "#eab308",
-    0: "#06b6d4",   # Low Risk
-    1: "#eab308",   # Medium Risk
-    2: "#ef4444",   # High Risk
+    0: "#06b6d4",   # Safe
+    1: "#eab308",   # Warning
+    2: "#ef4444",   # Crash
 }
 CAT_COLORS_CSS = {
     "Fossil Fuel": "rgba(239,68,68,0.15); color: #ef4444",
@@ -355,7 +355,7 @@ def load_data():
     data_dir = config.DATA_DIR
     try:
         clusters = pd.read_csv(os.path.join(data_dir, "cluster_assignments.csv"), index_col=0)
-        fast_movers = pd.read_csv(os.path.join(data_dir, "fast_movers.csv"), index_col=0)
+        warning_alerts = pd.read_csv(os.path.join(data_dir, "warning_alerts.csv"), index_col=0)
         trans_matrix = pd.read_csv(os.path.join(data_dir, "transition_matrix.csv"), index_col=0)
         prices = pd.read_csv(os.path.join(data_dir, "prices.csv"), index_col=0, parse_dates=True)
 
@@ -376,12 +376,12 @@ def load_data():
         if os.path.exists(rl_path):
             rolling_labels = pd.read_csv(rl_path, index_col=0, parse_dates=True)
 
-        return clusters, fast_movers, trans_matrix, prices, all_derivs, rolling_labels
+        return clusters, warning_alerts, trans_matrix, prices, all_derivs, rolling_labels
     except Exception as e:
         st.error(f"Error loading data: {e}")
         return None, None, None, None, None, None
 
-clusters, fast_movers, trans_matrix, prices, all_derivs, rolling_labels = load_data()
+clusters, warning_alerts, trans_matrix, prices, all_derivs, rolling_labels = load_data()
 
 if clusters is None:
     st.error("Data not found. Please run the main.py pipeline first to generate the output CSVs.")
@@ -482,7 +482,7 @@ if page == "🏠  Executive Summary":
 
     avg_rvi = clusters["RVI"].mean() if not clusters.empty else 0.0
     max_rvi = clusters["RVI"].max() if not clusters.empty else 0.0
-    n_fast = int(fast_movers["is_fast_mover"].sum()) if not fast_movers.empty else 0
+    n_fast = int(warning_alerts["is_warning_alert"].sum()) if not warning_alerts.empty else 0
     n_high = int((clusters["cluster"] == 2).sum()) if not clusters.empty else 0
 
     c1, c2, c3, c4 = st.columns(4)
@@ -493,12 +493,12 @@ if page == "🏠  Executive Summary":
     with c3:
         st.markdown(metric_card("⚡", "System Avg RVI", f"{avg_rvi:.6f}", "#a855f7"), unsafe_allow_html=True)
     with c4:
-        st.markdown(metric_card("🚨", "Critical Fast Movers", n_fast, "#ef4444", is_alert=(n_fast > 0)), unsafe_allow_html=True)
+        st.markdown(metric_card("🚨", "Warning State Alerts", n_fast, "#ef4444", is_alert=(n_fast > 0)), unsafe_allow_html=True)
 
-    # ── Fast Movers Alert Panel ──
-    section_header("🚨", "Fast Movers — Highest Risk Velocity Assets")
+    # ── Risk Velocity Alerts Panel ──
+    section_header("🚨", "Risk Velocity Alerts — Warning State Assets")
 
-    f_movers_df = fast_movers[fast_movers["is_fast_mover"]]
+    f_movers_df = warning_alerts[warning_alerts["is_warning_alert"]]
 
     if len(f_movers_df) > 0:
         fig_bar = go.Figure()
@@ -516,7 +516,7 @@ if page == "🏠  Executive Summary":
         fig_bar.add_hline(y=threshold, line_dash="dash", line_color="#eab308", line_width=2,
                           annotation_text="Critical Threshold", annotation_font=dict(color="#eab308", size=12))
         apply_chart_layout(fig_bar, height=420,
-            title=dict(text="Recent Risk Velocity Index (RVI) — Fast Movers", font=dict(size=16)),
+            title=dict(text="Recent Risk Velocity Index (RVI) — Warning Alerts", font=dict(size=16)),
             xaxis_title="Asset Ticker", yaxis_title="Recent Mean RVI",
             bargap=0.3,
         )
@@ -525,7 +525,7 @@ if page == "🏠  Executive Summary":
         st.markdown("""
         <div class="info-panel" style="border-color:rgba(34,197,94,0.25);text-align:center;padding:30px">
             <span style="font-size:32px">✅</span><br>
-            <span style="color:#22c55e;font-size:15px;font-weight:600;">No fast movers detected above the critical threshold</span><br>
+            <span style="color:#22c55e;font-size:15px;font-weight:600;">No warning alerts detected above the critical threshold</span><br>
             <span style="color:#64748b;font-size:13px;">All assets are within normal risk velocity ranges</span>
         </div>
         """, unsafe_allow_html=True)
@@ -533,7 +533,7 @@ if page == "🏠  Executive Summary":
     # ── Category Comparison ──
     section_header("📊", "Average Risk Velocity by Category")
 
-    grouped = fast_movers.groupby("category")["recent_RVI"].mean().reset_index()
+    grouped = warning_alerts.groupby("category")["recent_RVI"].mean().reset_index()
     grouped = grouped.sort_values("recent_RVI", ascending=True)
 
     fig_cat = go.Figure()
@@ -805,7 +805,7 @@ elif page == "🎯  Cluster Analysis":
         <div class="info-panel">
             <span style="color:#94a3b8;font-size:13px;">
             Assets are plotted in the (ξ, σ) parameter space. <b>Bubble size</b> represents Risk Velocity Index magnitude.
-            <b>Color</b> indicates K-Means cluster assignment (Low / Medium / High tail-risk).
+            <b>Color</b> indicates K-Means cluster assignment (Safe / Warning / Crash).
             </span>
         </div>
         """, unsafe_allow_html=True)
@@ -816,7 +816,7 @@ elif page == "🎯  Cluster Analysis":
             size="RVI",
             hover_name="Ticker",
             hover_data={"Category": True, "dxi_dt": ":.6f", "dsigma_dt": ":.6f", "RVI": ":.6f", "xi": ":.4f", "sigma": ":.4f", "cluster_label": False},
-            color_discrete_map={"Low Risk": COLORS[0], "Medium Risk": COLORS[1], "High Risk": COLORS[2]},
+            color_discrete_map={"Safe": COLORS[0], "Warning": COLORS[1], "Crash": COLORS[2]},
             labels={"xi": "Shape Parameter (ξ)", "sigma": "Scale Parameter (σ)", "cluster_label": "Risk Level"},
             size_max=45,
         )
@@ -984,7 +984,7 @@ elif page == "📚  Methodology & Theory":
         ("1", "Data Ingestion", "Historical price data collection via Yahoo Finance for fossil fuel, ESG, and benchmark assets"),
         ("2", "EVT / GPD Fitting", "Rolling-window Peaks-Over-Threshold with Generalized Pareto Distribution parameter estimation"),
         ("3", "Temporal Derivatives", "Savitzky-Golay smoothing and numerical differentiation of ξ(t) and σ(t) to obtain risk velocities"),
-        ("4", "Clustering & Detection", "K-Means clustering in parameter space with transition probability analysis and fast-mover detection"),
+        ("4", "Clustering & Detection", "K-Means clustering in parameter space with transition probability analysis and Risk Velocity Alert detection"),
     ]
     for col, (num, title, desc) in zip([mc1, mc2, mc3, mc4], steps):
         with col:
@@ -1026,16 +1026,16 @@ elif page == "📚  Methodology & Theory":
     with fm2:
         st.markdown("""
         <div class="info-panel">
-            <h4>Fast-Mover Detection</h4>
+            <h4>Risk Velocity Alert Detection</h4>
             <span style="color:#e2e8f0;font-size:13px;line-height:1.8;">
-            An asset is flagged as a <b>fast mover</b> when its recent average RVI exceeds a
+            An asset triggers a <b>Risk Velocity Alert</b> (Warning State) when its recent average RVI exceeds a
             critical threshold derived from the cross-sectional distribution of all asset RVI values,
-            indicating abnormally rapid tail-risk evolution.
+            indicating abnormally rapid tail-risk evolution toward the Warning state.
             </span>
         </div>
         """, unsafe_allow_html=True)
         st.latex(r"""
-        \text{Fast Mover:} \quad \overline{\text{RVI}}_{\text{recent}} > \mu_{\text{RVI}} + 2\sigma_{\text{RVI}}
+        \text{Warning Alert:} \quad \overline{\text{RVI}}_{\text{recent}} > \mu_{\text{RVI}} + 2\sigma_{\text{RVI}}
         """)
 
     section_header("⚙️", "Configuration Parameters")
@@ -1046,7 +1046,7 @@ elif page == "📚  Methodology & Theory":
         ("Min Exceedances", str(config.MIN_EXCEEDANCES), "Minimum data points for valid GPD fit"),
         ("Smoothing Window", str(config.SMOOTHING_WINDOW), "Savitzky-Golay window (must be odd)"),
         ("Smoothing Poly", str(config.SMOOTHING_POLY), "Polynomial order for smoothing filter"),
-        ("N Clusters", str(config.N_CLUSTERS), "K-Means cluster count (Low/Med/High)"),
+        ("N Clusters", str(config.N_CLUSTERS), "K-Means cluster count (Safe/Warning/Crash)"),
         ("RVI Weight ξ", str(config.VELOCITY_WEIGHT_XI), "Weight of dξ/dt in RVI formula"),
         ("RVI Weight σ", str(config.VELOCITY_WEIGHT_SIGMA), "Weight of dσ/dt in RVI formula"),
     ]

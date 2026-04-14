@@ -293,13 +293,13 @@ def plot_transition_sankey(transition_matrix: pd.DataFrame,
 # ──────────────────────────────────────────────────────────────
 # 6. Fossil-Fuel vs ESG Comparative Bar Chart
 # ──────────────────────────────────────────────────────────────
-def plot_comparative_bar(fast_movers: pd.DataFrame,
+def plot_comparative_bar(warning_alerts: pd.DataFrame,
                          save: bool = True) -> None:
     """Bar chart comparing average RVI between fossil-fuel and ESG groups."""
 
     fig, ax = plt.subplots(figsize=(14, 7))
 
-    grouped = fast_movers.groupby("category")["recent_RVI"].mean().sort_values(ascending=False)
+    grouped = warning_alerts.groupby("category")["recent_RVI"].mean().sort_values(ascending=False)
 
     colors_map = {"Fossil Fuel": "#ff6b6b", "ESG / Clean Energy": "#00d2ff",
                   "Benchmark": "#feca57"}
@@ -309,7 +309,7 @@ def plot_comparative_bar(fast_movers: pd.DataFrame,
                   edgecolor="white", linewidth=0.8, width=0.5)
 
     # Individual asset RVI as scatter overlay
-    for _, row in fast_movers.iterrows():
+    for _, row in warning_alerts.iterrows():
         c = colors_map.get(row["category"], "#aaa")
         cat_x = list(grouped.index).index(row["category"]) if row["category"] in grouped.index else 0
         ax.scatter(cat_x, row["recent_RVI"], color=c, s=60,
@@ -377,7 +377,7 @@ def plot_individual_rvi(all_derivs: dict[str, pd.DataFrame],
 # Master function — generate all plots
 # ──────────────────────────────────────────────────────────────
 def generate_all_plots(all_params, all_derivs, clustered,
-                       transition_matrix, fast_movers):
+                       transition_matrix, warning_alerts):
     """Convenience function to generate every visualisation."""
     print("\n" + "=" * 60)
     print("  GENERATING VISUALIZATIONS")
@@ -389,7 +389,7 @@ def generate_all_plots(all_params, all_derivs, clustered,
     plot_rvi_dashboard(all_derivs)
     plot_cluster_scatter(clustered)
     plot_transition_sankey(transition_matrix)
-    plot_comparative_bar(fast_movers)
+    plot_comparative_bar(warning_alerts)
     plot_individual_rvi(all_derivs)
 
     print("\n✅  All visualizations saved to:", config.FIGURES_DIR)

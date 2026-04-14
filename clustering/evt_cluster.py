@@ -2,13 +2,14 @@
 Clustering Module
 ------------------
 K-Means clustering on EVT parameter space (ξ, σ, dξ/dt, dσ/dt),
-transition-matrix computation, and fast-mover detection.
+transition-matrix computation, and Risk Velocity Alert detection.
 """
 
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score
 import sys, os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -58,7 +59,7 @@ def cluster_assets(features: pd.DataFrame,
     K-Means clustering on standardised EVT features.
 
     Returns the features DataFrame with an added 'cluster' column,
-    sorted so that cluster 0 has the lowest mean ξ (Low Risk).
+    sorted so that cluster 0 has the lowest mean ξ (Safe state).
     """
     n_clusters = n_clusters or config.N_CLUSTERS
 
@@ -79,7 +80,7 @@ def cluster_assets(features: pd.DataFrame,
     valid = valid.copy()
     valid["cluster"] = labels
 
-    # Re-label clusters so that 0 = lowest mean ξ → Low Risk
+    # Re-label clusters so that 0 = lowest mean ξ → Safe state
     cluster_mean_xi = valid.groupby("cluster")["xi"].mean().sort_values()
     label_map = {old: new for new, old in enumerate(cluster_mean_xi.index)}
     valid["cluster"] = valid["cluster"].map(label_map)
@@ -160,14 +161,15 @@ def compute_transition_matrix(labels_df: pd.DataFrame,
     return pd.DataFrame(trans_prob, index=labels, columns=labels)
 
 
-def detect_fast_movers(all_derivs: dict[str, pd.DataFrame],
-                        percentile: float = 80) -> pd.DataFrame:
+def detect_warning_alerts(all_derivs: dict[str, pd.DataFrame],
+                          percentile: float = 80) -> pd.DataFrame:
     """
-    Flag assets whose recent RVI exceeds a critical percentile.
+    Flag assets whose recent RVI exceeds a critical percentile,
+    indicating a Risk Velocity Alert (Warning State transition).
 
     Returns
     -------
-    pd.DataFrame with columns [ticker, recent_RVI, threshold, is_fast_mover]
+    pd.DataFrame with columns [ticker, recent_RVI, threshold, is_warning_alert]
     """
     recent_rvi = {}
     for ticker, df in all_derivs.items():
@@ -178,14 +180,90 @@ def detect_fast_movers(all_derivs: dict[str, pd.DataFrame],
     threshold  = np.percentile(rvi_series.dropna(), percentile)
 
     out = pd.DataFrame({
-        "recent_RVI":   rvi_series,
-        "threshold":    threshold,
-        "is_fast_mover": rvi_series > threshold,
-        "category":     [config.TICKER_CATEGORY.get(t, "Unknown")
-                         for t in rvi_series.index]
+        "recent_RVI":      rvi_series,
+        "threshold":       threshold,
+        "is_warning_alert": rvi_series > threshold,
+        "category":        [config.TICKER_CATEGORY.get(t, "Unknown")
+                            for t in rvi_series.index]
     })
     out.index.name = "Ticker"
     return out.sort_values("recent_RVI", ascending=False)
+
+
+def compute_silhouette(features: pd.DataFrame, labels: pd.Series) -> float:
+    """
+    Compute Silhouette Score for the cluster assignments.
+
+    Parameters
+    ----------
+    features : pd.DataFrame — the raw feature matrix (xi, sigma, dxi_dt, dsigma_dt, RVI)
+    labels   : pd.Series — cluster labels for each asset
+
+    Returns
+    -------
+    float — Silhouette Score in [-1, 1]. Higher is better.
+    """
+    valid = features.dropna()
+    valid_labels = labels.loc[valid.index]
+
+    if len(valid_labels.unique()) < 2:
+        return 0.0   # silhouette undefined for < 2 clusters
+
+    scaler = StandardScaler()
+    X = scaler.fit_transform(valid[["xi", "sigma", "dxi_dt", "dsigma_dt", "RVI"]])
+    return float(silhouette_score(X, valid_labels))
+
+
+def compute_lead_time(rolling_labels: pd.DataFrame,
+                      crash_cluster: int = None) -> pd.DataFrame:
+    """
+    Compute Lead Time (ΔT) — the number of time-steps between the
+    first Warning-state entry and the subsequent Crash-state entry
+    for each asset.
+
+    Parameters
+    ----------
+    rolling_labels : pd.DataFrame — index = dates, columns = tickers,
+                     values = cluster IDs
+    crash_cluster  : int — the cluster ID representing Crash state
+                     (defaults to config.VALIDATION_LEAD_TIME_CRASH_CLUSTER)
+
+    Returns
+    -------
+    pd.DataFrame with columns [ticker, first_warning, first_crash, lead_time_days]
+    """
+    crash_cluster = crash_cluster or config.VALIDATION_LEAD_TIME_CRASH_CLUSTER
+    warning_cluster = 1  # Warning state
+
+    records = []
+    for ticker in rolling_labels.columns:
+        seq = rolling_labels[ticker].dropna().astype(int)
+        dates = seq.index
+
+        first_warning = None
+        first_crash_after_warning = None
+
+        for d, label in zip(dates, seq.values):
+            if label == warning_cluster and first_warning is None:
+                first_warning = d
+            if label == crash_cluster and first_warning is not None:
+                first_crash_after_warning = d
+                break
+
+        lead_days = None
+        if first_warning is not None and first_crash_after_warning is not None:
+            lead_days = (pd.Timestamp(first_crash_after_warning)
+                         - pd.Timestamp(first_warning)).days
+
+        records.append({
+            "Ticker":          ticker,
+            "first_warning":   first_warning,
+            "first_crash":     first_crash_after_warning,
+            "lead_time_days":  lead_days,
+        })
+
+    out = pd.DataFrame(records).set_index("Ticker")
+    return out
 
 
 # ── Quick self-test ──────────────────────────────────────────

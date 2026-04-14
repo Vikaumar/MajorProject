@@ -26,7 +26,9 @@ from clustering.evt_cluster import (
     cluster_assets,
     build_rolling_cluster_labels,
     compute_transition_matrix,
-    detect_fast_movers,
+    detect_warning_alerts,
+    compute_silhouette,
+    compute_lead_time,
 )
 from visualization.plots import generate_all_plots
 
@@ -50,7 +52,7 @@ def run_pipeline():
 
     # ── Stage 1: Data Acquisition ────────────────────────────
     print("\n" + "─" * 60)
-    print("  STAGE 1 / 5 — DATA ACQUISITION")
+    print("  STAGE 1 / 6 — DATA ACQUISITION")
     print("─" * 60)
     prices = fetch_prices()
     losses = compute_negative_log_returns(prices)
@@ -62,7 +64,7 @@ def run_pipeline():
 
     # ── Stage 2: Rolling EVT (GPD Fitting) ───────────────────
     print("\n" + "─" * 60)
-    print("  STAGE 2 / 5 — ROLLING GPD FITTING (POT)")
+    print("  STAGE 2 / 6 — ROLLING GPD FITTING (POT)")
     print("─" * 60)
     all_params = compute_all_rolling_params(losses)
 
@@ -72,7 +74,7 @@ def run_pipeline():
 
     # ── Stage 3: Temporal Derivatives ────────────────────────
     print("\n" + "─" * 60)
-    print("  STAGE 3 / 5 — TEMPORAL DERIVATIVES (VELOCITY & RVI)")
+    print("  STAGE 3 / 6 — TEMPORAL DERIVATIVES (VELOCITY & RVI)")
     print("─" * 60)
     all_derivs = compute_all_derivatives(all_params)
 
@@ -82,7 +84,7 @@ def run_pipeline():
 
     # ── Stage 4: Clustering & Transitions ────────────────────
     print("\n" + "─" * 60)
-    print("  STAGE 4 / 5 — CLUSTERING & TRANSITION ANALYSIS")
+    print("  STAGE 4 / 6 — CLUSTERING & TRANSITION ANALYSIS")
     print("─" * 60)
 
     # Snapshot clustering (latest data)
@@ -100,27 +102,59 @@ def run_pipeline():
     print("\n  Transition Matrix (probability):")
     print(trans_matrix.to_string())
 
-    # Fast movers
-    fast_movers = detect_fast_movers(all_derivs)
-    print("\n  Fast Movers (high RVI):")
-    movers = fast_movers[fast_movers["is_fast_mover"]]
-    for ticker, row in movers.iterrows():
+    # Risk Velocity Alerts (Warning State)
+    warning_alerts = detect_warning_alerts(all_derivs)
+    print("\n  Risk Velocity Alerts (Warning State):")
+    alerts = warning_alerts[warning_alerts["is_warning_alert"]]
+    for ticker, row in alerts.iterrows():
         print(f"    ⚠  {ticker} ({row['category']}) — RVI = {row['recent_RVI']:.6f}")
 
     # Save
     clustered.to_csv(os.path.join(config.DATA_DIR, "cluster_assignments.csv"))
     trans_matrix.to_csv(os.path.join(config.DATA_DIR, "transition_matrix.csv"))
-    fast_movers.to_csv(os.path.join(config.DATA_DIR, "fast_movers.csv"))
+    warning_alerts.to_csv(os.path.join(config.DATA_DIR, "warning_alerts.csv"))
     labels_df.to_csv(os.path.join(config.DATA_DIR, "rolling_cluster_labels.csv"))
 
-    # ── Stage 5: Visualisation ───────────────────────────────
+    # ── Stage 5: Validation & Benchmarking ────────────────────
     print("\n" + "─" * 60)
-    print("  STAGE 5 / 5 — VISUALIZATION")
+    print("  STAGE 5 / 6 — VALIDATION & BENCHMARKING")
+    print("─" * 60)
+
+    # Silhouette Score
+    sil_score = compute_silhouette(features, clustered["cluster"])
+    print(f"\n  Silhouette Score: {sil_score:.4f}")
+    if sil_score > 0.5:
+        print("    → Strong cluster separation")
+    elif sil_score > 0.25:
+        print("    → Moderate cluster separation")
+    else:
+        print("    → Weak cluster separation — consider tuning parameters")
+
+    # Lead Time (ΔT)
+    lead_time_df = compute_lead_time(labels_df)
+    print("\n  Lead Time (ΔT) — Warning → Crash:")
+    for ticker, row in lead_time_df.iterrows():
+        if row["lead_time_days"] is not None and not pd.isna(row["lead_time_days"]):
+            print(f"    {ticker}: {int(row['lead_time_days'])} days")
+        else:
+            print(f"    {ticker}: No Warning→Crash transition observed")
+
+    # Save validation results
+    validation_summary = pd.DataFrame({
+        "metric": ["silhouette_score", "n_clusters", "n_assets"],
+        "value":  [sil_score, config.N_CLUSTERS, len(clustered)],
+    })
+    validation_summary.to_csv(os.path.join(config.DATA_DIR, "validation_summary.csv"), index=False)
+    lead_time_df.to_csv(os.path.join(config.DATA_DIR, "lead_time.csv"))
+
+    # ── Stage 6: Visualisation ─────────────────────────────
+    print("\n" + "─" * 60)
+    print("  STAGE 6 / 6 — VISUALIZATION")
     print("─" * 60)
     generate_all_plots(all_params, all_derivs, clustered,
-                       trans_matrix, fast_movers)
+                       trans_matrix, warning_alerts)
 
-    # ── Summary ──────────────────────────────────────────────
+    # ── Summary ────────────────────────────────────────────
     elapsed = time.time() - t0
     print("\n" + "═" * 60)
     print(f"  ✅  PIPELINE COMPLETE  ({elapsed:.1f}s)")
@@ -130,14 +164,16 @@ def run_pipeline():
     print("═" * 60)
 
     return {
-        "prices":       prices,
-        "losses":       losses,
-        "all_params":   all_params,
-        "all_derivs":   all_derivs,
-        "clustered":    clustered,
-        "trans_matrix": trans_matrix,
-        "fast_movers":  fast_movers,
-        "labels_df":    labels_df,
+        "prices":          prices,
+        "losses":          losses,
+        "all_params":      all_params,
+        "all_derivs":      all_derivs,
+        "clustered":       clustered,
+        "trans_matrix":    trans_matrix,
+        "warning_alerts":  warning_alerts,
+        "labels_df":       labels_df,
+        "silhouette":      sil_score,
+        "lead_time":       lead_time_df,
     }
 
 

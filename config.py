@@ -47,8 +47,11 @@ VELOCITY_WEIGHT_SIGMA = 0.4     # weight of dσ/dt in the Risk Velocity Index
 # ──────────────────────────────────────────────
 # Clustering Parameters
 # ──────────────────────────────────────────────
-N_CLUSTERS       = 3            # Low / Medium / High tail-risk
-CLUSTER_LABELS   = {0: "Low Risk", 1: "Medium Risk", 2: "High Risk"}
+N_CLUSTERS       = 3            # Safe / Warning / Crash
+CLUSTER_LABELS   = {0: "Safe", 1: "Warning", 2: "Crash"}
+
+# Validation Parameters
+VALIDATION_LEAD_TIME_CRASH_CLUSTER = 2   # cluster ID representing the Crash state
 
 # ──────────────────────────────────────────────
 # Output Paths
