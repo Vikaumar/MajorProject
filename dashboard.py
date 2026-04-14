@@ -607,10 +607,11 @@ elif page == "🔥  Risk Velocity Heatmap":
     """, unsafe_allow_html=True)
 
     col_ctrl1, col_ctrl2 = st.columns([2, 3])
+    param_labels = {"dxi_dt": "dξ/dt (Shape Velocity)", "dsigma_dt": "dσ/dt (Scale Velocity)", "RVI": "Risk Velocity Index"}
     with col_ctrl1:
         param_choice = st.radio("Select Parameter", ["dxi_dt", "dsigma_dt", "RVI"],
+                                format_func=lambda x: param_labels[x],
                                 horizontal=True, key="heatmap_param")
-    param_labels = {"dxi_dt": "dξ/dt (Shape Velocity)", "dsigma_dt": "dσ/dt (Scale Velocity)", "RVI": "Risk Velocity Index"}
 
     frames = {}
     for t, df_deriv in all_derivs.items():
