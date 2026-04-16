@@ -6,14 +6,18 @@ __pycache__/
 env/
 venv/
 ENV/
+
+# Streamlit (no longer used)
 .streamlit/
 
-# Data and output
-data/
-output/
-derivatives/
-*.csv
-*.xlsx
-*.parquet
+# Binary/temp data formats
 *.pkl
 *.joblib
+*.parquet
+
+# Frontend build artifacts & deps
+frontend/node_modules/
+frontend/dist/
+
+# Output figures (too large, regenerate locally)
+output/figures/
