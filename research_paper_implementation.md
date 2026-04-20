@@ -4,7 +4,7 @@ This section outlines the technical implementation of the Temporal EVT-Clusterin
 
 ## 1. System Pipeline Architecture
 
-The core computational engine operates as a six-stage pipeline designed to process raw financial time-series data into actionable risk intelligence:
+The core computational engine operates as a nine-stage pipeline designed to process raw financial time-series data into actionable risk intelligence:
 
 1. **Data Acquisition & Preprocessing:** 
    The system fetches historical price data for a predefined basket of assets spanning Fossil Fuel, ESG/Clean Energy, and Benchmark categories. The data is transformed into negative log-returns to isolate tail-risk events.
@@ -18,11 +18,42 @@ The core computational engine operates as a six-stage pipeline designed to proce
 4. **Clustering & Transition Dynamics:**
    Using K-Means clustering in the EVT parameter space (incorporating $\xi$, $\sigma$, and their temporal derivatives), assets are iteratively assigned to three distinct risk regimes: **Safe** (stable tail behavior), **Warning** (elevated and accelerating tail risk), and **Crash** (extreme tail regime with critical velocity). A Markovian transition matrix is derived from the rolling cluster labels to probabilistically model asset migration between these states. Furthermore, a **Risk Velocity Alert** mechanism flags assets transitioning into the Warning state by detecting acute spikes in their RVI that breach dynamically calculated critical thresholds.
 
-5. **Validation & Benchmarking Engine:**
-   To ensure empirical robustness, the framework incorporates a dedicated validation module. **Silhouette Score** analysis is performed to quantify the separability and cohesion of the derived risk clusters (Safe, Warning, Crash), providing a measure of clustering quality. Additionally, **Lead Time ($\Delta T$)** is computed—defined as the temporal gap between the first RVI-triggered Warning alert and the subsequent realization of a Crash-state event—to empirically validate the framework's predictive capability as an early-warning system.
+5. **Basic Validation (Silhouette Score & Lead Time):**
+   **Silhouette Score** analysis is performed to quantify the separability and cohesion of the derived risk clusters. **Lead Time ($\Delta T$)** is computed—defined as the temporal gap between the first RVI-triggered Warning alert and the subsequent realization of a Crash-state event.
 
-6. **Data Export & Persistence:**
-   The output matrices, transition probabilities, validation metrics, and asset trajectories are serialized into structurally uniform CSV datasets, serving as the static backend for the visualization layer.
+6. **Full-Dataset Backtesting & Signal-Quality Metrics:**
+   The warning→crash signal is rigorously evaluated across the entire rolling-label history for every asset. The system identifies:
+   - **True Positives (TP):** Warning signals followed by a Crash within a configurable horizon (default: 21 trading days).
+   - **False Positives (FP):** Warning signals with no subsequent Crash within the horizon.
+   - **False Negatives (FN):** Crash events not preceded by any Warning signal.
+   
+   From these counts, standard classification metrics are derived: **Precision**, **Recall**, and **F1-Score**, along with descriptive statistics for lead-time consistency (**mean and standard deviation of $\Delta T$**). An aggregate row across all assets provides the overall system-level performance.
+
+7. **Baseline Model Comparisons:**
+   To contextualize the framework's contribution, three conventional risk baselines are implemented and evaluated under the identical backtesting protocol:
+   - **Historical Simulation Value-at-Risk (VaR)** at the 95th percentile, computed over a rolling 252-day window.
+   - **Historical Expected Shortfall (ES / CVaR)** at the same confidence level.
+   - **Rolling Volatility** (annualized standard deviation over a 63-day window, flagged via percentile thresholds).
+   
+   Each baseline generates its own Safe/Warning/Crash label sequence using percentile-based thresholds, enabling a direct, apples-to-apples comparison of Precision, Recall, and F1 against the EVT-Clustering framework.
+
+8. **Clustering Optimisation (K-Sweep & GMM):**
+   The choice of $K=3$ clusters is empirically justified by sweeping $K \in \{2, 3, 4, 5\}$ and computing internal validation metrics for each:
+   - **Silhouette Score** (higher is better; measures intra-cluster cohesion vs inter-cluster separation).
+   - **Davies-Bouldin Index** (lower is better; ratio of within-cluster scatter to between-cluster separation).
+   - **Calinski-Harabasz Index** (higher is better; variance ratio criterion).
+   
+   As an alternative to K-Means, **Gaussian Mixture Models (GMM)** are fitted for each $K$, with additional model-selection criteria (**BIC** and **AIC**) to identify the optimal number of components. These results confirm that $K=3$ provides the best trade-off across all metrics.
+
+9. **Ablation Study (Novelty Justification):**
+   To empirically validate that the temporal derivative features ($d\xi/dt$, $d\sigma/dt$, RVI) constitute a meaningful contribution beyond standard EVT analysis, an ablation experiment is conducted:
+   - **EVT-only variant:** Clustering is performed using only the raw GPD parameters ($\xi$, $\sigma$), without any velocity features.
+   - **Full framework:** Clustering uses the complete feature set ($\xi$, $\sigma$, $d\xi/dt$, $d\sigma/dt$, RVI).
+   
+   Both variants are subjected to the same full-dataset backtesting, and the resulting Precision, Recall, F1, and mean lead-time are compared in a head-to-head table. The ablation demonstrates that incorporating temporal derivatives yields measurably superior predictive quality.
+
+10. **Data Export & Persistence:**
+    The output matrices, transition probabilities, validation metrics, backtest results, baseline comparisons, clustering optimisation tables, ablation study, and asset trajectories are serialized into structurally uniform CSV datasets, serving as the static backend for the visualization layer.
 
 ## 2. Interactive Dashboard Engineering
 
@@ -39,7 +70,7 @@ To democratize the theoretical framework and provide real-time analytical capabi
 
 *   **Core Logic:** Python 3.x
 *   **Data Manipulation & Math:** NumPy, Pandas, SciPy
-*   **Machine Learning/Clustering:** Scikit-Learn
+*   **Machine Learning/Clustering:** Scikit-Learn (K-Means, GMM, Silhouette, Davies-Bouldin, Calinski-Harabasz)
 *   **Front-End Framework:** Streamlit (with extended HTML/CSS overrides)
 *   **Interactive Visualization:** Plotly Graph Objects & Plotly Express
 

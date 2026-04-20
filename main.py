@@ -6,7 +6,8 @@
 ║  in Financial Markets                                       ║
 ║                                                             ║
 ║  Pipeline:  fetch → returns → rolling EVT → derivatives     ║
-║             → cluster → export → visualise                  ║
+║             → cluster → validate → baselines → ablation     ║
+║             → export → visualise                            ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
@@ -30,6 +31,9 @@ from clustering.evt_cluster import (
     compute_silhouette,
     compute_lead_time,
 )
+from clustering.optimization import run_clustering_optimization
+from validation.backtesting import run_full_backtest
+from baselines.models import run_all_baselines
 from visualization.plots import generate_all_plots
 
 
@@ -44,6 +48,94 @@ def print_banner():
     """)
 
 
+# ──────────────────────────────────────────────────────────────
+#  Ablation helper: cluster WITHOUT temporal derivatives
+# ──────────────────────────────────────────────────────────────
+def _build_feature_matrix_no_velocity(all_params: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """
+    Build a feature matrix using ONLY ξ and σ (no derivatives).
+    This is the 'ablation' variant that strips out the novelty feature.
+    """
+    features = {}
+    for ticker, params in all_params.items():
+        row = params.dropna().iloc[-1] if not params.dropna().empty else params.iloc[-1]
+        features[ticker] = {
+            "xi":    row.get("xi", np.nan),
+            "sigma": row.get("sigma", np.nan),
+        }
+    fm = pd.DataFrame(features).T
+    fm.index.name = "Ticker"
+    return fm
+
+
+def _cluster_assets_ablation(features: pd.DataFrame,
+                             n_clusters: int = None) -> pd.DataFrame:
+    """K-Means on ξ & σ only (ablation — no velocity features)."""
+    from sklearn.cluster import KMeans
+    from sklearn.preprocessing import StandardScaler
+
+    n_clusters = n_clusters or config.N_CLUSTERS
+    valid = features.dropna()
+    if len(valid) < n_clusters:
+        valid["cluster"] = 0
+        return valid
+
+    scaler = StandardScaler()
+    X = scaler.fit_transform(valid[["xi", "sigma"]])
+
+    km = KMeans(n_clusters=n_clusters, n_init=20, random_state=42)
+    labels = km.fit_predict(X)
+
+    valid = valid.copy()
+    valid["cluster"] = labels
+
+    # Re-label so 0 = lowest mean ξ → Safe
+    cluster_mean_xi = valid.groupby("cluster")["xi"].mean().sort_values()
+    label_map = {old: new for new, old in enumerate(cluster_mean_xi.index)}
+    valid["cluster"] = valid["cluster"].map(label_map)
+    valid["cluster_label"] = valid["cluster"].map(config.CLUSTER_LABELS)
+    return valid
+
+
+def _build_rolling_labels_ablation(all_params: dict[str, pd.DataFrame],
+                                   step: int = 21) -> pd.DataFrame:
+    """Rolling cluster labels using ONLY ξ & σ (ablation)."""
+    # Build a fake all_derivs with just xi and sigma (no velocity)
+    all_dates = None
+    for df in all_params.values():
+        if all_dates is None:
+            all_dates = df.index
+        else:
+            all_dates = all_dates.intersection(df.index)
+
+    all_dates = sorted(all_dates)
+    snapshot_dates = all_dates[::step]
+
+    records = []
+    for d in snapshot_dates:
+        features = {}
+        for ticker, params in all_params.items():
+            idx = params.index.get_indexer([pd.Timestamp(d)], method="nearest")
+            row = params.iloc[idx[0]]
+            features[ticker] = {
+                "xi":    row.get("xi", np.nan),
+                "sigma": row.get("sigma", np.nan),
+            }
+        fm = pd.DataFrame(features).T
+        fm.index.name = "Ticker"
+        cl = _cluster_assets_ablation(fm)
+        row_dict = cl["cluster"].to_dict()
+        row_dict["_date"] = d
+        records.append(row_dict)
+
+    labels_df = pd.DataFrame(records).set_index("_date")
+    labels_df.index.name = "Date"
+    return labels_df
+
+
+# ──────────────────────────────────────────────────────────────
+#  Main pipeline
+# ──────────────────────────────────────────────────────────────
 def run_pipeline():
     """Execute the full research pipeline end-to-end."""
 
@@ -52,7 +144,7 @@ def run_pipeline():
 
     # ── Stage 1: Data Acquisition ────────────────────────────
     print("\n" + "─" * 60)
-    print("  STAGE 1 / 6 — DATA ACQUISITION")
+    print("  STAGE 1 / 9 — DATA ACQUISITION")
     print("─" * 60)
     prices = fetch_prices()
     losses = compute_negative_log_returns(prices)
@@ -64,27 +156,25 @@ def run_pipeline():
 
     # ── Stage 2: Rolling EVT (GPD Fitting) ───────────────────
     print("\n" + "─" * 60)
-    print("  STAGE 2 / 6 — ROLLING GPD FITTING (POT)")
+    print("  STAGE 2 / 9 — ROLLING GPD FITTING (POT)")
     print("─" * 60)
     all_params = compute_all_rolling_params(losses)
 
-    # Save params
     for ticker, df in all_params.items():
         df.to_csv(os.path.join(config.DATA_DIR, f"gpd_params_{ticker}.csv"))
 
     # ── Stage 3: Temporal Derivatives ────────────────────────
     print("\n" + "─" * 60)
-    print("  STAGE 3 / 6 — TEMPORAL DERIVATIVES (VELOCITY & RVI)")
+    print("  STAGE 3 / 9 — TEMPORAL DERIVATIVES (VELOCITY & RVI)")
     print("─" * 60)
     all_derivs = compute_all_derivatives(all_params)
 
-    # Save derivatives
     for ticker, df in all_derivs.items():
         df.to_csv(os.path.join(config.DATA_DIR, f"derivatives_{ticker}.csv"))
 
     # ── Stage 4: Clustering & Transitions ────────────────────
     print("\n" + "─" * 60)
-    print("  STAGE 4 / 6 — CLUSTERING & TRANSITION ANALYSIS")
+    print("  STAGE 4 / 9 — CLUSTERING & TRANSITION ANALYSIS")
     print("─" * 60)
 
     # Snapshot clustering (latest data)
@@ -115,12 +205,11 @@ def run_pipeline():
     warning_alerts.to_csv(os.path.join(config.DATA_DIR, "warning_alerts.csv"))
     labels_df.to_csv(os.path.join(config.DATA_DIR, "rolling_cluster_labels.csv"))
 
-    # ── Stage 5: Validation & Benchmarking ────────────────────
+    # ── Stage 5: Validation — Silhouette & Lead Time ─────────
     print("\n" + "─" * 60)
-    print("  STAGE 5 / 6 — VALIDATION & BENCHMARKING")
+    print("  STAGE 5 / 9 — BASIC VALIDATION (SILHOUETTE & LEAD TIME)")
     print("─" * 60)
 
-    # Silhouette Score
     sil_score = compute_silhouette(features, clustered["cluster"])
     print(f"\n  Silhouette Score: {sil_score:.4f}")
     if sil_score > 0.5:
@@ -130,7 +219,6 @@ def run_pipeline():
     else:
         print("    → Weak cluster separation — consider tuning parameters")
 
-    # Lead Time (ΔT)
     lead_time_df = compute_lead_time(labels_df)
     print("\n  Lead Time (ΔT) — Warning → Crash:")
     for ticker, row in lead_time_df.iterrows():
@@ -139,7 +227,6 @@ def run_pipeline():
         else:
             print(f"    {ticker}: No Warning→Crash transition observed")
 
-    # Save validation results
     validation_summary = pd.DataFrame({
         "metric": ["silhouette_score", "n_clusters", "n_assets"],
         "value":  [sil_score, config.N_CLUSTERS, len(clustered)],
@@ -147,9 +234,110 @@ def run_pipeline():
     validation_summary.to_csv(os.path.join(config.DATA_DIR, "validation_summary.csv"), index=False)
     lead_time_df.to_csv(os.path.join(config.DATA_DIR, "lead_time.csv"))
 
-    # ── Stage 6: Visualisation ─────────────────────────────
+    # ── Stage 6: Full-Dataset Backtesting ─────────────────────
     print("\n" + "─" * 60)
-    print("  STAGE 6 / 6 — VISUALIZATION")
+    print("  STAGE 6 / 9 — FULL-DATASET BACKTESTING")
+    print("─" * 60)
+
+    print(f"\n  Backtest horizon: {config.BACKTEST_HORIZON} trading days")
+    backtest_results = run_full_backtest(labels_df, horizon=config.BACKTEST_HORIZON)
+    print("\n  Signal-Quality Metrics (EVT-Clustering Framework):")
+    print(backtest_results.to_string())
+
+    backtest_results.to_csv(os.path.join(config.DATA_DIR, "backtesting_results.csv"))
+
+    # ── Stage 7: Baseline Comparisons ─────────────────────────
+    print("\n" + "─" * 60)
+    print("  STAGE 7 / 9 — BASELINE MODEL COMPARISONS")
+    print("─" * 60)
+
+    baseline_labels_all = run_all_baselines(losses)
+    baseline_backtest_records = []
+
+    for method, bl_labels in baseline_labels_all.items():
+        print(f"\n  ── Backtesting {method} baseline ──")
+        bl_backtest = run_full_backtest(bl_labels, horizon=config.BACKTEST_HORIZON)
+        # Extract just the AGGREGATE row
+        agg = bl_backtest.loc["AGGREGATE"]
+        baseline_backtest_records.append({
+            "Method":        method,
+            "TP":            agg["TP"],
+            "FP":            agg["FP"],
+            "FN":            agg["FN"],
+            "Precision":     agg["Precision"],
+            "Recall":        agg["Recall"],
+            "F1":            agg["F1"],
+            "mean_lead_time": agg["mean_lead_time"],
+        })
+
+    # Add our framework's aggregate row
+    our_agg = backtest_results.loc["AGGREGATE"]
+    baseline_backtest_records.insert(0, {
+        "Method":        "EVT-Clustering (Ours)",
+        "TP":            our_agg["TP"],
+        "FP":            our_agg["FP"],
+        "FN":            our_agg["FN"],
+        "Precision":     our_agg["Precision"],
+        "Recall":        our_agg["Recall"],
+        "F1":            our_agg["F1"],
+        "mean_lead_time": our_agg["mean_lead_time"],
+    })
+
+    comparison_df = pd.DataFrame(baseline_backtest_records).set_index("Method")
+    print("\n  ╔══ Baseline Comparison Summary ══╗")
+    print(comparison_df.to_string())
+    comparison_df.to_csv(os.path.join(config.DATA_DIR, "baseline_comparisons.csv"))
+
+    # ── Stage 8: Clustering Optimisation ──────────────────────
+    print("\n" + "─" * 60)
+    print("  STAGE 8 / 9 — CLUSTERING OPTIMISATION (K SWEEP + GMM)")
+    print("─" * 60)
+
+    cluster_opt = run_clustering_optimization(features, k_range=config.K_RANGE)
+    cluster_opt.to_csv(os.path.join(config.DATA_DIR, "clustering_optimization.csv"), index=False)
+
+    # ── Stage 9: Ablation Study ───────────────────────────────
+    print("\n" + "─" * 60)
+    print("  STAGE 9 / 9 — ABLATION STUDY (EVT-only vs EVT+Velocity)")
+    print("─" * 60)
+
+    # Ablation: cluster using ONLY xi, sigma (no velocity features)
+    print("\n  Running ablation (EVT-only, no temporal derivatives) …")
+    ablation_labels = _build_rolling_labels_ablation(all_params)
+    ablation_backtest = run_full_backtest(ablation_labels, horizon=config.BACKTEST_HORIZON)
+
+    abl_agg = ablation_backtest.loc["AGGREGATE"]
+
+    ablation_table = pd.DataFrame([
+        {
+            "Variant":        "EVT-only (ξ, σ)",
+            "TP":             abl_agg["TP"],
+            "FP":             abl_agg["FP"],
+            "FN":             abl_agg["FN"],
+            "Precision":      abl_agg["Precision"],
+            "Recall":         abl_agg["Recall"],
+            "F1":             abl_agg["F1"],
+            "mean_lead_time": abl_agg["mean_lead_time"],
+        },
+        {
+            "Variant":        "EVT + Velocity (ξ, σ, dξ/dt, dσ/dt, RVI)",
+            "TP":             our_agg["TP"],
+            "FP":             our_agg["FP"],
+            "FN":             our_agg["FN"],
+            "Precision":      our_agg["Precision"],
+            "Recall":         our_agg["Recall"],
+            "F1":             our_agg["F1"],
+            "mean_lead_time": our_agg["mean_lead_time"],
+        },
+    ]).set_index("Variant")
+
+    print("\n  ╔══ Ablation Study Results ══╗")
+    print(ablation_table.to_string())
+    ablation_table.to_csv(os.path.join(config.DATA_DIR, "ablation_study.csv"))
+
+    # ── Visualisation ─────────────────────────────────────────
+    print("\n" + "─" * 60)
+    print("  GENERATING VISUALISATIONS")
     print("─" * 60)
     generate_all_plots(all_params, all_derivs, clustered,
                        trans_matrix, warning_alerts)
@@ -163,17 +351,27 @@ def run_pipeline():
     print(f"  📄  Data CSVs:        {config.DATA_DIR}")
     print("═" * 60)
 
+    print("\n  New output files for the paper:")
+    print("    • backtesting_results.csv     — TP/FP/FN/Precision/Recall/F1 per asset")
+    print("    • baseline_comparisons.csv    — our method vs VaR/ES/Volatility")
+    print("    • clustering_optimization.csv — K sweep with Silhouette/DB/CH for KMeans & GMM")
+    print("    • ablation_study.csv          — EVT-only vs EVT+Velocity")
+
     return {
-        "prices":          prices,
-        "losses":          losses,
-        "all_params":      all_params,
-        "all_derivs":      all_derivs,
-        "clustered":       clustered,
-        "trans_matrix":    trans_matrix,
-        "warning_alerts":  warning_alerts,
-        "labels_df":       labels_df,
-        "silhouette":      sil_score,
-        "lead_time":       lead_time_df,
+        "prices":              prices,
+        "losses":              losses,
+        "all_params":          all_params,
+        "all_derivs":          all_derivs,
+        "clustered":           clustered,
+        "trans_matrix":        trans_matrix,
+        "warning_alerts":      warning_alerts,
+        "labels_df":           labels_df,
+        "silhouette":          sil_score,
+        "lead_time":           lead_time_df,
+        "backtest_results":    backtest_results,
+        "baseline_comparisons": comparison_df,
+        "cluster_optimization": cluster_opt,
+        "ablation_study":      ablation_table,
     }
 
 

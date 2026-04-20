@@ -53,9 +53,22 @@ CLUSTER_LABELS   = {0: "Safe", 1: "Warning", 2: "Crash"}
 # Validation Parameters
 VALIDATION_LEAD_TIME_CRASH_CLUSTER = 2   # cluster ID representing the Crash state
 
-# ──────────────────────────────────────────────
+# Backtesting Parameters
+BACKTEST_HORIZON    = 120       # trading days to look-ahead when evaluating warning→crash
+WARNING_CLUSTER_ID  = 1         # cluster ID for the Warning state
+CRASH_CLUSTER_ID    = 2         # cluster ID for the Crash state
+
+# Clustering Optimisation
+K_RANGE = [2, 3, 4, 5]         # values of K to sweep
+
+# Baseline Models
+VAR_WINDOW        = 252         # rolling window for VaR / ES
+VAR_CONFIDENCE    = 0.95        # quantile level
+VOL_WINDOW        = 63          # rolling window for volatility baseline
+
+# ──────────────────────────────────────────────────────────────
 # Output Paths
-# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR   = os.path.join(PROJECT_ROOT, "output")
 FIGURES_DIR  = os.path.join(OUTPUT_DIR, "figures")
