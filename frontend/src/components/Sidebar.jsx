@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { id: 'deepdive', icon: '🔍', label: 'Asset Deep Dive' },
   { id: 'clusters', icon: '🎯', label: 'Cluster Analysis' },
   { id: 'compare', icon: '📈', label: 'Comparative Analytics' },
+  { id: 'backtest', icon: '🧪', label: 'Backtest Results' },
   { id: 'methodology', icon: '📚', label: 'Methodology & Theory' },
 ];
 

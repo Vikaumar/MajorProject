@@ -114,9 +114,17 @@ def backtest_asset(label_seq: pd.Series,
 #  Full-dataset backtest
 # ──────────────────────────────────────────────────────────────
 def run_full_backtest(rolling_labels: pd.DataFrame,
-                      horizon: int = DEFAULT_HORIZON) -> pd.DataFrame:
+                      horizon: int = DEFAULT_HORIZON,
+                      test_start: str = None) -> pd.DataFrame:
     """
     Run backtest_asset for every ticker column in *rolling_labels*.
+
+    Parameters
+    ----------
+    rolling_labels : pd.DataFrame — index = dates, columns = tickers
+    horizon        : int — look-ahead window in trading days
+    test_start     : str — if provided, only evaluate on dates >= test_start
+                     (train/test split for out-of-sample evaluation)
 
     Returns
     -------
@@ -124,6 +132,13 @@ def run_full_backtest(rolling_labels: pd.DataFrame,
         Ticker, TP, FP, FN, Precision, Recall, F1,
         mean_lead_time, std_lead_time, n_warnings, n_crashes
     """
+    # ── Filter to test period if requested ────────────────────
+    if test_start is not None:
+        ts = pd.Timestamp(test_start)
+        rolling_labels = rolling_labels[rolling_labels.index >= ts]
+        print(f"    [backtest] Evaluating only TEST period: {test_start} onward "
+              f"({len(rolling_labels)} snapshots)")
+
     records = []
     for ticker in rolling_labels.columns:
         seq = rolling_labels[ticker].dropna()

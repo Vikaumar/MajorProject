@@ -26,8 +26,12 @@ for t in BENCHMARK_TICKERS:
 # ──────────────────────────────────────────────
 # Date Range
 # ──────────────────────────────────────────────
-START_DATE = "2018-01-01"
+START_DATE = "2009-01-01"
 END_DATE   = "2025-12-31"
+
+# Train / Test split boundary
+TRAIN_END  = "2018-12-31"          # fit KMeans on data up to this date
+TEST_START = "2019-01-01"          # evaluate metrics from this date onward
 
 # ──────────────────────────────────────────────
 # EVT / GPD Parameters

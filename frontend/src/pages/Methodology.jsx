@@ -7,8 +7,9 @@ import Loading from '../components/Loading';
 const PIPELINE_STEPS = [
   { num: '1', title: 'Data Ingestion', desc: 'Historical price data collection via Yahoo Finance for fossil fuel, ESG, and benchmark assets' },
   { num: '2', title: 'EVT / GPD Fitting', desc: 'Rolling-window Peaks-Over-Threshold with Generalized Pareto Distribution parameter estimation' },
-  { num: '3', title: 'Temporal Derivatives', desc: 'Savitzky-Golay smoothing and numerical differentiation of ξ(t) and σ(t) to obtain risk velocities' },
-  { num: '4', title: 'Clustering & Detection', desc: 'K-Means clustering in parameter space with transition probability analysis and Risk Velocity Alert detection' },
+  { num: '3', title: 'Temporal Derivatives', desc: 'Savitzky-Golay smoothing and numerical differentiation of \u03be(t) and \u03c3(t) to obtain risk velocities' },
+  { num: '4', title: 'Train/Test Split & Clustering', desc: 'K-Means fitted on train period (\u22642018), then predict-only on test period (2019+) \u2014 prevents data leakage and overfitting' },
+  { num: '5', title: 'Out-of-Sample Validation', desc: 'Precision, Recall, F1 and Lead Time computed exclusively on the unseen test set (2019\u20132025)' },
 ];
 
 export default function Methodology() {
@@ -27,8 +28,11 @@ export default function Methodology() {
     ['Smoothing Window', cfg.smoothingWindow, 'Savitzky-Golay window (must be odd)'],
     ['Smoothing Poly', cfg.smoothingPoly, 'Polynomial order for smoothing filter'],
     ['N Clusters', cfg.nClusters, 'K-Means cluster count (Safe/Warning/Crash)'],
-    ['RVI Weight ξ', cfg.velocityWeightXi, 'Weight of dξ/dt in RVI formula'],
-    ['RVI Weight σ', cfg.velocityWeightSigma, 'Weight of dσ/dt in RVI formula'],
+    ['RVI Weight \u03be', cfg.velocityWeightXi, 'Weight of d\u03be/dt in RVI formula'],
+    ['RVI Weight \u03c3', cfg.velocityWeightSigma, 'Weight of d\u03c3/dt in RVI formula'],
+    ['Train End', cfg.trainEnd || '2018-12-31', 'Last date for model training (KMeans.fit)'],
+    ['Test Start', cfg.testStart || '2019-01-01', 'First date for out-of-sample evaluation (KMeans.predict)'],
+    ['Backtest Horizon', cfg.backtestHorizon || 120, 'Trading days look-ahead for Warning\u2192Crash signal'],
   ];
 
   return (
@@ -39,7 +43,7 @@ export default function Methodology() {
       />
 
       {/* Pipeline Overview */}
-      <SectionHeader icon="🔬" text="Research Pipeline Overview" />
+      <SectionHeader icon="\ud83d\udd2c" text="Research Pipeline Overview" />
       <div className="method-grid">
         {PIPELINE_STEPS.map((step) => (
           <div className="method-card" key={step.num}>
@@ -51,10 +55,10 @@ export default function Methodology() {
       </div>
 
       {/* Mathematical Formulations */}
-      <SectionHeader icon="📐" text="Key Mathematical Formulations" />
+      <SectionHeader icon="\ud83d\udcd0" text="Key Mathematical Formulations" />
 
       <div className="formula-block">
-        GPD CDF: &nbsp; G<sub>ξ,σ</sub>(x) = 1 − (1 + ξx / σ)<sup>−1/ξ</sup>, &nbsp; x &gt; 0
+        GPD CDF: &nbsp; G<sub>\u03be,\u03c3</sub>(x) = 1 \u2212 (1 + \u03bex / \u03c3)<sup>\u22121/\u03be</sup>, &nbsp; x &gt; 0
       </div>
 
       <div className="split-row" style={{ marginTop: 16 }}>
@@ -68,10 +72,10 @@ export default function Methodology() {
             </p>
           </div>
           <div className="formula-block">
-            RVI(t) = w<sub>ξ</sub> |dξ/dt| + w<sub>σ</sub> |dσ/dt|
+            RVI(t) = w<sub>\u03be</sub> |d\u03be/dt| + w<sub>\u03c3</sub> |d\u03c3/dt|
           </div>
           <div style={{ color: '#64748b', fontSize: 12, marginTop: 8, paddingLeft: 4 }}>
-            Current weights: w<sub>ξ</sub> = {cfg.velocityWeightXi}, w<sub>σ</sub> = {cfg.velocityWeightSigma}
+            Current weights: w<sub>\u03be</sub> = {cfg.velocityWeightXi}, w<sub>\u03c3</sub> = {cfg.velocityWeightSigma}
           </div>
         </div>
         <div>
@@ -84,13 +88,25 @@ export default function Methodology() {
             </p>
           </div>
           <div className="formula-block">
-            Warning Alert: &nbsp; R̄VI<sub>recent</sub> &gt; μ<sub>RVI</sub> + 2σ<sub>RVI</sub>
+            Warning Alert: &nbsp; R&#x0304;VI<sub>recent</sub> &gt; \u03bc<sub>RVI</sub> + 2\u03c3<sub>RVI</sub>
           </div>
         </div>
       </div>
 
+      {/* Train/Test Split Explanation */}
+      <SectionHeader icon="\ud83e\uddea" text="Out-of-Sample Evaluation Design" />
+      <div className="info-panel" style={{ borderLeft: '3px solid #a855f7' }}>
+        <h4>Temporal Train / Test Split</h4>
+        <p style={{ lineHeight: 2 }}>
+          To ensure the model is <b>not overfitting</b>, we implement a strict temporal split:<br />
+          <b>Training Period:</b> {cfg.startDate} \u2192 {cfg.trainEnd || '2018-12-31'} \u2014 KMeans centroids and StandardScaler are <b>fitted</b> on this data.<br />
+          <b>Testing Period:</b> {cfg.testStart || '2019-01-01'} \u2192 {cfg.endDate} \u2014 Model only <b>predicts</b> cluster labels (no re-fitting).<br />
+          All reported metrics (Precision, Recall, F1-Score, Lead Time) are computed <b>exclusively</b> on the out-of-sample test set.
+        </p>
+      </div>
+
       {/* Configuration Parameters */}
-      <SectionHeader icon="⚙️" text="Configuration Parameters" />
+      <SectionHeader icon="\u2699\ufe0f" text="Configuration Parameters" />
       <div className="table-wrapper" style={{ marginBottom: 24 }}>
         <table className="styled-table">
           <thead>
@@ -109,10 +125,12 @@ export default function Methodology() {
       </div>
 
       {/* Data Universe */}
-      <SectionHeader icon="📊" text="Data Universe" />
+      <SectionHeader icon="\ud83d\udcca" text="Data Universe" />
       <div className="info-panel">
         <p style={{ lineHeight: 2 }}>
-          <b>Date Range:</b> {cfg.startDate} → {cfg.endDate}<br />
+          <b>Full Date Range:</b> {cfg.startDate} \u2192 {cfg.endDate}<br />
+          <b>Train Period:</b> {cfg.startDate} \u2192 {cfg.trainEnd || '2018-12-31'} (model fitting)<br />
+          <b>Test Period:</b> {cfg.testStart || '2019-01-01'} \u2192 {cfg.endDate} (out-of-sample evaluation)<br />
           <b>Fossil Fuel ({cfg.fossilFuelTickers.length}):</b> {cfg.fossilFuelTickers.join(', ')}<br />
           <b>ESG / Clean Energy ({cfg.esgCleanTickers.length}):</b> {cfg.esgCleanTickers.join(', ')}<br />
           <b>Benchmark ({cfg.benchmarkTickers.length}):</b> {cfg.benchmarkTickers.join(', ')}<br />

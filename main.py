@@ -234,14 +234,17 @@ def run_pipeline():
     validation_summary.to_csv(os.path.join(config.DATA_DIR, "validation_summary.csv"), index=False)
     lead_time_df.to_csv(os.path.join(config.DATA_DIR, "lead_time.csv"))
 
-    # ── Stage 6: Full-Dataset Backtesting ─────────────────────
+    # ── Stage 6: Out-of-Sample Backtesting ─────────────────────
     print("\n" + "─" * 60)
-    print("  STAGE 6 / 9 — FULL-DATASET BACKTESTING")
+    print("  STAGE 6 / 9 — OUT-OF-SAMPLE BACKTESTING")
     print("─" * 60)
 
-    print(f"\n  Backtest horizon: {config.BACKTEST_HORIZON} trading days")
-    backtest_results = run_full_backtest(labels_df, horizon=config.BACKTEST_HORIZON)
-    print("\n  Signal-Quality Metrics (EVT-Clustering Framework):")
+    print(f"\n  Train period:      up to {config.TRAIN_END}")
+    print(f"  Test  period:      {config.TEST_START} onward")
+    print(f"  Backtest horizon:  {config.BACKTEST_HORIZON} trading days")
+    backtest_results = run_full_backtest(labels_df, horizon=config.BACKTEST_HORIZON,
+                                         test_start=config.TEST_START)
+    print("\n  Signal-Quality Metrics (EVT-Clustering, TEST SET ONLY):")
     print(backtest_results.to_string())
 
     backtest_results.to_csv(os.path.join(config.DATA_DIR, "backtesting_results.csv"))
@@ -256,7 +259,8 @@ def run_pipeline():
 
     for method, bl_labels in baseline_labels_all.items():
         print(f"\n  ── Backtesting {method} baseline ──")
-        bl_backtest = run_full_backtest(bl_labels, horizon=config.BACKTEST_HORIZON)
+        bl_backtest = run_full_backtest(bl_labels, horizon=config.BACKTEST_HORIZON,
+                                         test_start=config.TEST_START)
         # Extract just the AGGREGATE row
         agg = bl_backtest.loc["AGGREGATE"]
         baseline_backtest_records.append({
@@ -304,7 +308,8 @@ def run_pipeline():
     # Ablation: cluster using ONLY xi, sigma (no velocity features)
     print("\n  Running ablation (EVT-only, no temporal derivatives) …")
     ablation_labels = _build_rolling_labels_ablation(all_params)
-    ablation_backtest = run_full_backtest(ablation_labels, horizon=config.BACKTEST_HORIZON)
+    ablation_backtest = run_full_backtest(ablation_labels, horizon=config.BACKTEST_HORIZON,
+                                           test_start=config.TEST_START)
 
     abl_agg = ablation_backtest.loc["AGGREGATE"]
 

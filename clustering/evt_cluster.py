@@ -89,11 +89,56 @@ def cluster_assets(features: pd.DataFrame,
     return valid
 
 
+def cluster_assets_predict(features: pd.DataFrame,
+                           fitted_scaler,
+                           fitted_km,
+                           label_map: dict,
+                           feature_cols: list[str] = None) -> pd.DataFrame:
+    """
+    Predict-only clustering using a pre-fitted scaler and KMeans model.
+    Used on TEST data to avoid data leakage.
+
+    Parameters
+    ----------
+    features     : pd.DataFrame — feature matrix for one snapshot
+    fitted_scaler: StandardScaler — fitted on train data
+    fitted_km    : KMeans — fitted on train data
+    label_map    : dict — maps raw KMeans labels → ordered labels (0=Safe)
+    feature_cols : list — column names used during training
+
+    Returns
+    -------
+    pd.DataFrame — features with 'cluster' and 'cluster_label' columns
+    """
+    feature_cols = feature_cols or ["xi", "sigma", "dxi_dt", "dsigma_dt", "RVI"]
+    valid = features.dropna()
+
+    if valid.empty:
+        valid["cluster"] = 0
+        valid["cluster_label"] = config.CLUSTER_LABELS.get(0, "Safe")
+        return valid
+
+    X = fitted_scaler.transform(valid[feature_cols])
+    raw_labels = fitted_km.predict(X)
+
+    valid = valid.copy()
+    valid["cluster"] = [label_map.get(l, l) for l in raw_labels]
+    valid["cluster_label"] = valid["cluster"].map(config.CLUSTER_LABELS)
+    return valid
+
+
 def build_rolling_cluster_labels(all_derivs: dict[str, pd.DataFrame],
                                   n_clusters: int = None,
                                   step: int = 21) -> pd.DataFrame:
     """
     Cluster assets at multiple points in time to track migrations.
+
+    Implements a proper TRAIN / TEST temporal split:
+      • Train snapshots (≤ config.TRAIN_END):  KMeans.fit_predict()
+      • Test  snapshots (>  config.TRAIN_END):  KMeans.predict() only
+
+    The scaler + KMeans fitted on the LAST train snapshot are reused
+    for all test snapshots, preventing data leakage.
 
     Parameters
     ----------
@@ -104,6 +149,7 @@ def build_rolling_cluster_labels(all_derivs: dict[str, pd.DataFrame],
     pd.DataFrame — index = dates, columns = tickers, values = cluster labels
     """
     n_clusters = n_clusters or config.N_CLUSTERS
+    train_end = pd.Timestamp(config.TRAIN_END)
 
     # Determine common date range
     all_dates = None
@@ -116,11 +162,62 @@ def build_rolling_cluster_labels(all_derivs: dict[str, pd.DataFrame],
     all_dates = sorted(all_dates)
     snapshot_dates = all_dates[::step]
 
+    # Split into train and test snapshots
+    train_snapshots = [d for d in snapshot_dates if pd.Timestamp(d) <= train_end]
+    test_snapshots  = [d for d in snapshot_dates if pd.Timestamp(d) > train_end]
+
+    print(f"\n  Train/Test Split:")
+    print(f"    Train snapshots: {len(train_snapshots)}  (up to {config.TRAIN_END})")
+    print(f"    Test  snapshots: {len(test_snapshots)}  (from {config.TEST_START})")
+
+    # ── TRAIN phase: fit_predict at each train snapshot ──────
     records = []
-    for d in snapshot_dates:
+    fitted_scaler = None
+    fitted_km = None
+    fitted_label_map = None
+
+    for d in train_snapshots:
         d_str = str(d.date()) if hasattr(d, 'date') else str(d)
         fm = build_feature_matrix(all_derivs, snapshot_date=d_str)
         cl = cluster_assets(fm, n_clusters)
+        row = cl["cluster"].to_dict()
+        row["_date"] = d
+        records.append(row)
+
+    # Fit the final train-snapshot model (this is the one we keep)
+    if train_snapshots:
+        last_train_date = train_snapshots[-1]
+        d_str = str(last_train_date.date()) if hasattr(last_train_date, 'date') else str(last_train_date)
+        fm_train = build_feature_matrix(all_derivs, snapshot_date=d_str)
+        valid_train = fm_train.dropna()
+
+        feature_cols = ["xi", "sigma", "dxi_dt", "dsigma_dt", "RVI"]
+        fitted_scaler = StandardScaler()
+        X_train = fitted_scaler.fit_transform(valid_train[feature_cols])
+
+        fitted_km = KMeans(n_clusters=n_clusters, n_init=20, random_state=42)
+        raw_labels = fitted_km.fit_predict(X_train)
+
+        # Build the label map: 0 = lowest mean ξ → Safe
+        temp = valid_train.copy()
+        temp["_raw"] = raw_labels
+        cluster_mean_xi = temp.groupby("_raw")["xi"].mean().sort_values()
+        fitted_label_map = {old: new for new, old in enumerate(cluster_mean_xi.index)}
+
+        print(f"    Fitted model on last train snapshot: {d_str}")
+
+    # ── TEST phase: predict-only at each test snapshot ────────
+    for d in test_snapshots:
+        d_str = str(d.date()) if hasattr(d, 'date') else str(d)
+        fm = build_feature_matrix(all_derivs, snapshot_date=d_str)
+
+        if fitted_scaler is not None and fitted_km is not None:
+            cl = cluster_assets_predict(fm, fitted_scaler, fitted_km,
+                                        fitted_label_map, feature_cols)
+        else:
+            # Fallback: if no train data, just fit_predict
+            cl = cluster_assets(fm, n_clusters)
+
         row = cl["cluster"].to_dict()
         row["_date"] = d
         records.append(row)

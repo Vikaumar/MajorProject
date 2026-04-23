@@ -47,6 +47,16 @@ def _load_all():
         else:
             _cache["rolling_labels"] = None
 
+        # Backtesting & comparison CSVs
+        for key, fname in [("backtest", "backtesting_results.csv"),
+                           ("baselines", "baseline_comparisons.csv"),
+                           ("ablation", "ablation_study.csv")]:
+            path = os.path.join(d, fname)
+            if os.path.exists(path):
+                _cache[key] = pd.read_csv(path, index_col=0)
+            else:
+                _cache[key] = None
+
         print(f"[OK] Loaded {len(derivs)} derivative files from {d}")
     except Exception as e:
         print(f"[ERROR] Failed to load data: {e}")
@@ -102,6 +112,9 @@ def get_config():
         "nClusters": config.N_CLUSTERS,
         "velocityWeightXi": config.VELOCITY_WEIGHT_XI,
         "velocityWeightSigma": config.VELOCITY_WEIGHT_SIGMA,
+        "trainEnd": config.TRAIN_END,
+        "testStart": config.TEST_START,
+        "backtestHorizon": config.BACKTEST_HORIZON,
     }
 
 
@@ -316,6 +329,49 @@ def compare_assets(tickers: str = "XOM,ICLN,SPY"):
             result[t] = {"dates": dates, "rvi": rvi}
 
     return result
+
+
+# ─── Backtesting / Out-of-Sample Results endpoint ────────────
+@app.get("/api/backtesting")
+def get_backtesting():
+    """Serve out-of-sample backtesting metrics, baseline comparisons, and ablation study."""
+    backtest = _cache.get("backtest")
+    baselines = _cache.get("baselines")
+    ablation = _cache.get("ablation")
+
+    def df_to_records(df):
+        if df is None:
+            return []
+        records = []
+        for idx, row in df.iterrows():
+            rec = {"name": str(idx)}
+            for col in df.columns:
+                rec[col] = _safe(row[col])
+            records.append(rec)
+        return records
+
+    # Per-asset backtest results (exclude AGGREGATE)
+    asset_results = []
+    agg_result = None
+    if backtest is not None:
+        for idx, row in backtest.iterrows():
+            rec = {"ticker": str(idx)}
+            for col in backtest.columns:
+                rec[col] = _safe(row[col])
+            if str(idx) == "AGGREGATE":
+                agg_result = rec
+            else:
+                asset_results.append(rec)
+
+    return {
+        "trainEnd": config.TRAIN_END,
+        "testStart": config.TEST_START,
+        "backtestHorizon": config.BACKTEST_HORIZON,
+        "assetResults": asset_results,
+        "aggregate": agg_result,
+        "baselines": df_to_records(baselines),
+        "ablation": df_to_records(ablation),
+    }
 
 
 if __name__ == "__main__":

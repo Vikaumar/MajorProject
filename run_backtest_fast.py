@@ -10,12 +10,15 @@ def main():
     labels_df = pd.read_csv(os.path.join(config.DATA_DIR, "rolling_cluster_labels.csv"), index_col=0, parse_dates=True)
 
     print("\n" + "─" * 60)
-    print("  STAGE 6 / 9 — FULL-DATASET BACKTESTING (FAST RUN)")
+    print("  STAGE 6 / 9 — OUT-OF-SAMPLE BACKTESTING (FAST RUN)")
     print("─" * 60)
     
-    print(f"\n  Backtest horizon: {config.BACKTEST_HORIZON} trading days")
-    backtest_results = run_full_backtest(labels_df, horizon=config.BACKTEST_HORIZON)
-    print("\n  Signal-Quality Metrics (EVT-Clustering Framework):")
+    print(f"\n  Train period:      up to {config.TRAIN_END}")
+    print(f"  Test  period:      {config.TEST_START} onward")
+    print(f"  Backtest horizon:  {config.BACKTEST_HORIZON} trading days")
+    backtest_results = run_full_backtest(labels_df, horizon=config.BACKTEST_HORIZON,
+                                         test_start=config.TEST_START)
+    print("\n  Signal-Quality Metrics (EVT-Clustering, TEST SET ONLY):")
     print(backtest_results.to_string())
 
     print("\n" + "─" * 60)
@@ -26,7 +29,8 @@ def main():
     baseline_backtest_records = []
 
     for method, bl_labels in baseline_labels_all.items():
-        bl_backtest = run_full_backtest(bl_labels, horizon=config.BACKTEST_HORIZON)
+        bl_backtest = run_full_backtest(bl_labels, horizon=config.BACKTEST_HORIZON,
+                                         test_start=config.TEST_START)
         agg = bl_backtest.loc["AGGREGATE"]
         baseline_backtest_records.append({
             "Method":        method,

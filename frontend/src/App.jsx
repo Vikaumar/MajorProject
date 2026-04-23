@@ -5,6 +5,7 @@ import RiskVelocityHeatmap from './pages/RiskVelocityHeatmap';
 import AssetDeepDive from './pages/AssetDeepDive';
 import ClusterAnalysis from './pages/ClusterAnalysis';
 import ComparativeAnalytics from './pages/ComparativeAnalytics';
+import BacktestResults from './pages/BacktestResults';
 import Methodology from './pages/Methodology';
 
 const PAGES = {
@@ -13,6 +14,7 @@ const PAGES = {
   deepdive: AssetDeepDive,
   clusters: ClusterAnalysis,
   compare: ComparativeAnalytics,
+  backtest: BacktestResults,
   methodology: Methodology,
 };
 
